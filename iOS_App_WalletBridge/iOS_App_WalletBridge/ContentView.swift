@@ -1,12 +1,13 @@
 import SwiftUI
 import SceneKit
+import UIKit
 
 // MARK: - Data Models
 struct PhysicalCoin: Identifiable {
     let id = UUID()
     let name: String
     let symbol: String
-    let nfcSerial: String // Ties back to your ESP32 project!
+    let nfcSerial: String
     let denomination: Double
     let color: Color
 }
@@ -15,6 +16,37 @@ let mockWallet = [
     PhysicalCoin(name: "Bitcoin", symbol: "BTC", nfcSerial: "04:6A:B2:99:8A:21", denomination: 0.05, color: .orange),
     PhysicalCoin(name: "Ethereum", symbol: "ETH", nfcSerial: "04:8C:11:F2:3B:10", denomination: 1.5, color: .purple)
 ]
+
+// MARK: - Reusable Minimal Grid Background
+struct GridBackgroundView: View {
+    var body: some View {
+        ZStack {
+            // Very dark, sophisticated gray
+            Color(red: 0.06, green: 0.06, blue: 0.07).ignoresSafeArea()
+            
+            GeometryReader { geometry in
+                Path { path in
+                    let width = geometry.size.width
+                    let height = geometry.size.height
+                    let spacing: CGFloat = 35 // Size of the grid squares
+                    
+                    // Vertical lines
+                    for x in stride(from: 0, through: width, by: spacing) {
+                        path.move(to: CGPoint(x: x, y: 0))
+                        path.addLine(to: CGPoint(x: x, y: height))
+                    }
+                    // Horizontal lines
+                    for y in stride(from: 0, through: height, by: spacing) {
+                        path.move(to: CGPoint(x: 0, y: y))
+                        path.addLine(to: CGPoint(x: width, y: y))
+                    }
+                }
+                .stroke(Color.white.opacity(0.04), lineWidth: 1) // Very subtle dim lines
+            }
+            .ignoresSafeArea()
+        }
+    }
+}
 
 // MARK: - Main App View
 struct ContentView: View {
@@ -36,16 +68,16 @@ struct ContentView: View {
                 }
                 .tag(1)
         }
-        .preferredColorScheme(.dark) // Forces the dark-themed premium look
+        .preferredColorScheme(.dark)
         .accentColor(.white)
     }
 }
 
-// MARK: - Home View (Big 3D Coin)
+// MARK: - Home View
 struct HomeView: View {
     var body: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
+            GridBackgroundView() // Independent Grid Background
             
             VStack {
                 Text("Physical Crypto")
@@ -77,7 +109,7 @@ struct HomeView: View {
     }
 }
 
-// MARK: - Wallet View (Animated 3D Cards)
+// MARK: - Wallet View
 struct WalletView: View {
     @State private var isAnimating = false
     @State private var selectedCard: PhysicalCoin?
@@ -85,10 +117,10 @@ struct WalletView: View {
     var body: some View {
         NavigationView {
             ZStack {
-                Color.black.ignoresSafeArea()
+                GridBackgroundView() // Independent Grid Background
                 
                 ScrollView {
-                    VStack(spacing: -60) { // Negative spacing for overlapping wallet effect
+                    VStack(spacing: -60) {
                         ForEach(Array(mockWallet.enumerated()), id: \.element.id) { index, coin in
                             CoinCardView(coin: coin)
                                 .rotation3DEffect(
@@ -124,7 +156,7 @@ struct WalletView: View {
     }
 }
 
-// MARK: - Coin Card (Glassmorphism UI)
+// MARK: - Coin Card View
 struct CoinCardView: View {
     let coin: PhysicalCoin
     
@@ -175,7 +207,7 @@ struct CoinDetailView: View {
     
     var body: some View {
         ZStack {
-            Color(UIColor.systemBackground).ignoresSafeArea()
+            GridBackgroundView() // Independent Grid Background
             
             VStack(spacing: 30) {
                 Capsule()
@@ -195,7 +227,7 @@ struct CoinDetailView: View {
                 VStack(spacing: 15) {
                     DetailRow(title: "Asset", value: coin.name)
                     DetailRow(title: "Denomination", value: "\(coin.denomination) \(coin.symbol)")
-                    DetailRow(title: "Physical Tag ID", value: coin.nfcSerial) // Tie to ESP32!
+                    DetailRow(title: "Physical Tag ID", value: coin.nfcSerial)
                     DetailRow(title: "Status", value: "Verified Authentic")
                 }
                 .padding(20)
@@ -227,60 +259,192 @@ struct DetailRow: View {
 
 // MARK: - SceneKit 3D Coin Implementation
 struct Coin3DView: UIViewRepresentable {
+    
+    // Custom Coordinator to handle manual rotation gestures
+    class Coordinator: NSObject {
+        var userRotationNode: SCNNode?
+        var currentXAngle: Float = Float.pi / 10 // Starts with the initial slight tilt
+        var currentYAngle: Float = 0.0
+        
+        @objc func handlePan(_ gesture: UIPanGestureRecognizer) {
+            guard let view = gesture.view as? SCNView, let node = userRotationNode else { return }
+            
+            let translation = gesture.translation(in: view)
+            let panSensitivity: Float = 0.01
+            
+            // Accumulate the angles based on finger swipe
+            currentYAngle += Float(translation.x) * panSensitivity
+            currentXAngle += Float(translation.y) * panSensitivity
+            
+            // Apply directly to the node's Euler Angles for a clean, twist-free rotation
+            node.eulerAngles = SCNVector3(currentXAngle, currentYAngle, 0)
+            
+            // Reset translation so we only deal with deltas
+            gesture.setTranslation(.zero, in: view)
+        }
+    }
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+    
     func makeUIView(context: Context) -> SCNView {
         let sceneView = SCNView()
         let scene = SCNScene()
         
-        // 1. Create a flattened cylinder to look like a coin
+        let cryptoTexture = generateCryptoTexture()
+        
+        // 1. Premium Gold Materials
+        let faceMaterial = SCNMaterial()
+        faceMaterial.diffuse.contents = cryptoTexture
+        faceMaterial.metalness.contents = 1.0
+        faceMaterial.roughness.contents = 0.18
+        faceMaterial.lightingModel = .physicallyBased
+        
+        let sideMaterial = SCNMaterial()
+        sideMaterial.diffuse.contents = UIColor(red: 0.95, green: 0.75, blue: 0.1, alpha: 1.0)
+        sideMaterial.metalness.contents = 1.0
+        sideMaterial.roughness.contents = 0.18
+        sideMaterial.lightingModel = .physicallyBased
+        
+        // 2. Base Coin Node
         let coinGeometry = SCNCylinder(radius: 1.0, height: 0.1)
-        
-        // 2. Make it look metallic/gold
-        let material = SCNMaterial()
-        material.diffuse.contents = UIColor.systemOrange // Golden orange
-        material.metalness.contents = 1.0
-        material.roughness.contents = 0.2
-        material.lightingModel = .physicallyBased
-        coinGeometry.materials = [material]
-        
+        coinGeometry.materials = [sideMaterial, faceMaterial, faceMaterial]
         let coinNode = SCNNode(geometry: coinGeometry)
         
-        // Tilt it slightly so we see the 3D edge
-        coinNode.eulerAngles = SCNVector3(x: .pi / 8, y: 0, z: 0)
-        scene.rootNode.addChildNode(coinNode)
+        // 3. Hierarchy Setup for Independent Animations vs Gestures
+        let hoverNode = SCNNode()
+        hoverNode.addChildNode(coinNode)
         
-        // 3. Add ambient lighting
-        let ambientLight = SCNLight()
-        ambientLight.type = .ambient
-        ambientLight.intensity = 200
-        let ambientNode = SCNNode()
-        ambientNode.light = ambientLight
-        scene.rootNode.addChildNode(ambientNode)
+        let userRotationNode = SCNNode()
+        userRotationNode.addChildNode(hoverNode)
+        userRotationNode.eulerAngles = SCNVector3(x: Float.pi / 10, y: 0, z: 0) // Initial tilt
+        scene.rootNode.addChildNode(userRotationNode)
         
-        // 4. Add a directional spotlight for shiny reflections
-        let spotLight = SCNLight()
-        spotLight.type = .directional
-        spotLight.intensity = 1000
-        let spotNode = SCNNode()
-        spotNode.light = spotLight
-        spotNode.position = SCNVector3(x: 5, y: 5, z: 5)
-        spotNode.look(at: SCNVector3(x: 0, y: 0, z: 0))
-        scene.rootNode.addChildNode(spotNode)
+        // Pass the node to our gesture coordinator
+        context.coordinator.userRotationNode = userRotationNode
         
-        // 5. Spin animation
-        let spin = SCNAction.rotateBy(x: 0, y: .pi * 2, z: 0, duration: 4.0)
-        let repeatSpin = SCNAction.repeatForever(spin)
-        coinNode.runAction(repeatSpin)
+        // 4. Locked Lighting (No longer moves when you swipe)
+        let keyLight = SCNLight()
+        keyLight.type = .spot
+        keyLight.color = UIColor(white: 1.0, alpha: 1.0)
+        keyLight.intensity = 500
+        keyLight.castsShadow = false
+        let keyNode = SCNNode()
+        keyNode.light = keyLight
+        keyNode.position = SCNVector3(x: -2, y: 4, z: 5)
+        keyNode.look(at: SCNVector3(0,0,0))
+        scene.rootNode.addChildNode(keyNode)
         
-        // 6. Setup the view
+        let rimLight = SCNLight()
+        rimLight.type = .spot
+        rimLight.color = UIColor(red: 0.6, green: 0.8, blue: 1.0, alpha: 1.0)
+        rimLight.intensity = 1500
+        let rimNode = SCNNode()
+        rimNode.light = rimLight
+        rimNode.position = SCNVector3(x: 3, y: -2, z: -4)
+        rimNode.look(at: SCNVector3(0,0,0))
+        scene.rootNode.addChildNode(rimNode)
+        
+        let fillLight = SCNLight()
+        fillLight.type = .ambient
+        fillLight.intensity = 350
+        let fillNode = SCNNode()
+        fillNode.light = fillLight
+        scene.rootNode.addChildNode(fillNode)
+        
+        // 5. Animations
+        // Constant slow spin
+        let spin = SCNAction.rotateBy(x: 0, y: CGFloat.pi * 2, z: 0, duration: 8.0)
+        coinNode.runAction(SCNAction.repeatForever(spin))
+        
+        // Hovering physics
+        let hoverUp = SCNAction.moveBy(x: 0, y: 0.15, z: 0, duration: 2.5)
+        hoverUp.timingMode = .easeInEaseOut
+        let hoverDown = SCNAction.moveBy(x: 0, y: -0.15, z: 0, duration: 2.5)
+        hoverDown.timingMode = .easeInEaseOut
+        let hoverSequence = SCNAction.sequence([hoverUp, hoverDown])
+        hoverNode.runAction(SCNAction.repeatForever(hoverSequence))
+        
+        // Pulsating light
+        let pulseDuration: TimeInterval = 4.0
+        let pulseAction = SCNAction.customAction(duration: pulseDuration) { node, elapsedTime in
+            let angle = (elapsedTime / pulseDuration) * CGFloat.pi * 2
+            let sineValue = (sin(angle - CGFloat.pi / 2) + 1.0) / 2.0
+            node.light?.intensity = 500 + (700 * sineValue)
+        }
+        keyNode.runAction(SCNAction.repeatForever(pulseAction))
+        
+        // 6. Camera Setup (Static)
+        let cameraNode = SCNNode()
+        let camera = SCNCamera()
+        camera.wantsHDR = true
+        camera.exposureOffset = 0.1
+        camera.bloomThreshold = 0.6
+        camera.bloomIntensity = 0.4
+        camera.bloomBlurRadius = 14.0
+        cameraNode.camera = camera
+        cameraNode.position = SCNVector3(0, 0, 2.8)
+        scene.rootNode.addChildNode(cameraNode)
+        
+        // 7. Render Configuration & Gestures
         sceneView.scene = scene
-        sceneView.allowsCameraControl = true // Lets the user swipe to rotate the coin manually!
-        sceneView.backgroundColor = UIColor.clear
-        sceneView.autoenablesDefaultLighting = true
+        sceneView.pointOfView = cameraNode
+        
+        // FIX: Disable camera control so the background and lights stay completely locked
+        sceneView.allowsCameraControl = false
+        
+        // Add our custom pan gesture to rotate the coin directly
+        let panGesture = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handlePan(_:)))
+        sceneView.addGestureRecognizer(panGesture)
+        
+        sceneView.backgroundColor = UIColor.clear // Allows the SwiftUI Grid to show through
+        sceneView.antialiasingMode = .multisampling4X
         
         return sceneView
     }
     
-    func updateUIView(_ uiView: SCNView, context: Context) {
-        // Handle updates if necessary
+    func updateUIView(_ uiView: SCNView, context: Context) {}
+    
+    // MARK: - Programmatic Texture Generator
+    private func generateCryptoTexture() -> UIImage {
+        let size = CGSize(width: 1024, height: 1024)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let renderer = UIGraphicsImageRenderer(size: size, format: format)
+        
+        return renderer.image { ctx in
+            UIColor(red: 0.95, green: 0.72, blue: 0.1, alpha: 1.0).setFill()
+            ctx.cgContext.fill(CGRect(origin: .zero, size: size))
+            
+            ctx.cgContext.setStrokeColor(UIColor(white: 0.15, alpha: 1.0).cgColor)
+            ctx.cgContext.setLineWidth(25)
+            ctx.cgContext.addEllipse(in: CGRect(x: 70, y: 70, width: 884, height: 884))
+            ctx.cgContext.strokePath()
+            
+            ctx.cgContext.setLineDash(phase: 0, lengths: [50, 25])
+            ctx.cgContext.setLineWidth(12)
+            ctx.cgContext.addEllipse(in: CGRect(x: 140, y: 140, width: 744, height: 744))
+            ctx.cgContext.strokePath()
+            ctx.cgContext.setLineDash(phase: 0, lengths: [])
+            
+            let text = "₿"
+            let paragraphStyle = NSMutableParagraphStyle()
+            paragraphStyle.alignment = .center
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: 580, weight: .black),
+                .foregroundColor: UIColor(white: 0.15, alpha: 1.0),
+                .paragraphStyle: paragraphStyle
+            ]
+            
+            let textSize = text.size(withAttributes: attrs)
+            let textRect = CGRect(
+                x: 0,
+                y: (size.height - textSize.height) / 2,
+                width: size.width,
+                height: textSize.height
+            )
+            text.draw(in: textRect, withAttributes: attrs)
+        }
     }
 }
