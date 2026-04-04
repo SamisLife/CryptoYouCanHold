@@ -43,7 +43,12 @@ struct HardwareControlModal: View {
     }
     
     var statusColor: Color {
-        switch coin.status { case .active: return .green; case .disabled: return .red; case .initializing: return .yellow }
+        switch coin.status {
+        case .active: return .green
+        case .disabled: return .red
+        case .initializing: return .yellow
+        case .error: return .orange
+        }
     }
 }
 
