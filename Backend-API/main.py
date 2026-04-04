@@ -154,3 +154,16 @@ def execute_transfer(request: TransferRequest):
         "source_wallet": source_wallet,
         "destination_wallet": request.destination_wallet
     }
+
+@app.get("/coins/wallet/{wallet_id}")
+def get_wallet_coins(wallet_id: str):
+    """Fetches all physical coins tied to a specific digital wallet."""
+    db = load_db()
+    wallet_coins = []
+    
+    # Loop through the database and find coins belonging to this wallet
+    for coin_id, coin_data in db.items():
+        if coin_data.get("wallet_id") == wallet_id:
+            wallet_coins.append(coin_data)
+            
+    return wallet_coins
