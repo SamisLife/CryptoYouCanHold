@@ -9,7 +9,7 @@ app = FastAPI(title="Physical Crypto API", description="Hardware Wallet Backend"
 
 DB_FILE = "db.json"
 
-# --- DATA MODELS ---
+# data models
 class PhysicalCoin(BaseModel):
     coin_id: str
     wallet_id: str
@@ -22,70 +22,87 @@ class PhysicalCoin(BaseModel):
 
 class TransferRequest(BaseModel):
     coin_id: str
-    destination_wallet: str # The digital wallet receiving the funds
+    destination_wallet: str 
 
-# DB Helpers
+# db helpers
 def load_db() -> Dict[str, dict]:
     if not os.path.exists(DB_FILE):
-        return {}
+        # new structure
+        return {
+            "coins": {},
+            "wallets": {
+                "wallet_person_1": {"BTC": 2.45, "ETH": 14.2},
+                "wallet_person_2": {"BTC": 0.0, "ETH": 0.0}
+            }
+        }
     with open(DB_FILE, "r") as f:
         try:
             return json.load(f)
         except json.JSONDecodeError:
-            return {}
+            return {"coins": {}, "wallets": {"wallet_person_1": {"BTC": 2.45, "ETH": 14.2}, "wallet_person_2": {"BTC": 0.0, "ETH": 0.0}}}
 
 def save_db(data: Dict[str, dict]):
     with open(DB_FILE, "w") as f:
         json.dump(data, f, indent=4)
 
-# API Endpoints
+# --- API ENDPOINTS ---
 
 @app.post("/coins/", status_code=201)
 def create_coin(coin: PhysicalCoin):
-    """Initializes a new physical coin from the iOS app."""
     db = load_db()
-    if coin.coin_id in db:
+    if coin.coin_id in db["coins"]:
         raise HTTPException(status_code=400, detail="Coin ID already exists.")
     
-    db[coin.coin_id] = coin.dict()
+    # 1. Ensure wallet and symbol exist
+    wallet_data = db["wallets"].get(coin.wallet_id, {})
+    if coin.symbol not in wallet_data:
+        wallet_data[coin.symbol] = 0.0
+        
+    # 2. Deduct the specific crypto amount from the sender
+    wallet_data[coin.symbol] -= coin.amount
+    db["wallets"][coin.wallet_id] = wallet_data
+
+    # 3. Save the physical coin
+    db["coins"][coin.coin_id] = coin.dict()
     save_db(db)
-    return {"message": "Hardware coin initialized", "coin": db[coin.coin_id]}
+    return {"message": "Hardware coin initialized", "coin": db["coins"][coin.coin_id]}
 
 @app.get("/coins/{coin_id}")
 def get_coin(coin_id: str):
-    """Fetches coin details and verifies if it exists."""
     db = load_db()
-    if coin_id not in db:
+    if coin_id not in db["coins"]:
         raise HTTPException(status_code=404, detail="Coin not found.")
-    return db[coin_id]
+    return db["coins"][coin_id]
 
 @app.delete("/coins/{coin_id}")
 def delete_coin(coin_id: str):
-    """Deletes the coin (Reclaim Balance feature)."""
     db = load_db()
-    if coin_id not in db:
+    if coin_id not in db["coins"]:
         raise HTTPException(status_code=404, detail="Coin not found.")
     
-    deleted_coin = db.pop(coin_id)
+    deleted_coin = db["coins"].pop(coin_id)
+    
+    # Reclaim: Refund the specific crypto symbol back to the sender
+    wallet_data = db["wallets"].get(deleted_coin["wallet_id"], {})
+    if deleted_coin["symbol"] not in wallet_data:
+        wallet_data[deleted_coin["symbol"]] = 0.0
+        
+    wallet_data[deleted_coin["symbol"]] += deleted_coin["amount"]
+    db["wallets"][deleted_coin["wallet_id"]] = wallet_data
+    
     save_db(db)
-    return {
-        "message": "Coin deleted, funds released", 
-        "refund_amount": deleted_coin["amount"],
-        "refund_to_wallet": deleted_coin["wallet_id"]
-    }
+    return {"message": "Coin deleted, funds refunded"}
 
 @app.put("/coins/{coin_id}/status")
 def toggle_status(coin_id: str, disabled: bool):
-    """Enables or disables the physical coin."""
     db = load_db()
-    if coin_id not in db:
+    if coin_id not in db["coins"]:
         raise HTTPException(status_code=404, detail="Coin not found.")
     
-    db[coin_id]["disabled"] = disabled
+    db["coins"][coin_id]["disabled"] = disabled
     if disabled:
-        # If disabled, immediately revoke transfer privileges
-        db[coin_id]["transferrable"] = False
-        db[coin_id]["transfer_start_timestamp"] = None
+        db["coins"][coin_id]["transferrable"] = False
+        db["coins"][coin_id]["transfer_start_timestamp"] = None
         
     save_db(db)
     state = "Disabled" if disabled else "Active"
@@ -93,77 +110,68 @@ def toggle_status(coin_id: str, disabled: bool):
 
 @app.put("/coins/{coin_id}/transfer_mode")
 def unlock_transfer_mode(coin_id: str):
-    """Unlocks the coin for transfer for exactly 2 minutes."""
     db = load_db()
-    if coin_id not in db:
+    if coin_id not in db["coins"]:
         raise HTTPException(status_code=404, detail="Coin not found.")
+    if db["coins"][coin_id].get("disabled"):
+        raise HTTPException(status_code=403, detail="Cannot unlock disabled coin.")
     
-    if db[coin_id].get("disabled"):
-        raise HTTPException(status_code=403, detail="Cannot unlock a disabled coin.")
-    
-    db[coin_id]["transferrable"] = True
-    db[coin_id]["transfer_start_timestamp"] = time.time()
+    db["coins"][coin_id]["transferrable"] = True
+    db["coins"][coin_id]["transfer_start_timestamp"] = time.time()
     save_db(db)
-    
-    return {"message": "Transfer mode unlocked. Expires in 120 seconds."}
+    return {"message": "Transfer mode unlocked."}
 
 @app.post("/coins/transfer")
 def execute_transfer(request: TransferRequest):
-    """
-    The ESP32/NFC scanner hits this endpoint to claim the coin.
-    Verifies the 2-minute window before allowing the transfer.
-    """
     db = load_db()
     coin_id = request.coin_id
     
-    if coin_id not in db:
-        raise HTTPException(status_code=404, detail="Invalid physical coin.")
+    if coin_id not in db["coins"]: raise HTTPException(status_code=404, detail="Invalid physical coin.")
+    coin_data = db["coins"][coin_id]
     
-    coin_data = db[coin_id]
-    
-    # 1. Check if disabled
-    if coin_data.get("disabled"):
-        raise HTTPException(status_code=403, detail="Coin is disabled for security reasons.")
-    
-    # 2. Check if transferrable mode was ever activated
+    if coin_data.get("disabled"): raise HTTPException(status_code=403, detail="Coin is disabled.")
     if not coin_data.get("transferrable") or coin_data.get("transfer_start_timestamp") is None:
-        raise HTTPException(status_code=403, detail="Transfer mode is not active. Unlock via iOS app first.")
+        raise HTTPException(status_code=403, detail="Transfer mode not active.")
     
-    # 3. Check the 2-minute (120 seconds) window
-    elapsed_time = time.time() - coin_data["transfer_start_timestamp"]
-    if elapsed_time > 120:
-        # Automatically lock it back up
+    if time.time() - coin_data["transfer_start_timestamp"] > 120:
         coin_data["transferrable"] = False
         coin_data["transfer_start_timestamp"] = None
         save_db(db)
-        raise HTTPException(status_code=403, detail="Transfer window expired. Please unlock again.")
+        raise HTTPException(status_code=403, detail="Transfer window expired.")
     
-    # 4. Execute transfer and destroy the physical link
     transfer_amount = coin_data["amount"]
     symbol = coin_data["symbol"]
-    source_wallet = coin_data["wallet_id"]
+    dest_wallet = request.destination_wallet
+
+    # Ensure destination wallet and symbol exist
+    dest_data = db["wallets"].get(dest_wallet, {})
+    if symbol not in dest_data:
+        dest_data[symbol] = 0.0
+        
+    # Credit the receiver
+    dest_data[symbol] += transfer_amount
+    db["wallets"][dest_wallet] = dest_data
     
-    db.pop(coin_id)
+    # Destroy physical link
+    db["coins"].pop(coin_id)
     save_db(db)
     
     return {
         "status": "SUCCESS",
-        "message": f"Successfully transferred {transfer_amount} {symbol} from {source_wallet} to {request.destination_wallet}",
-        "amount": transfer_amount,
-        "symbol": symbol,
-        "source_wallet": source_wallet,
-        "destination_wallet": request.destination_wallet
+        "message": f"Transferred {transfer_amount} {symbol} to {dest_wallet}"
     }
 
 @app.get("/coins/wallet/{wallet_id}")
 def get_wallet_coins(wallet_id: str):
-    """Fetches all physical coins tied to a specific digital wallet."""
     db = load_db()
-    wallet_coins = []
+    return [coin_data for coin_data in db["coins"].values() if coin_data.get("wallet_id") == wallet_id]
+
+@app.get("/wallets/{wallet_id}")
+def get_wallet_balances(wallet_id: str):
+    """Fetches the digital balances for a specific wallet."""
+    db = load_db()
+    if wallet_id not in db["wallets"]:
+        # If the wallet doesn't exist yet, return 0 balances
+        return {"BTC": 0.0, "ETH": 0.0}
     
-    # Loop through the database and find coins belonging to this wallet
-    for coin_id, coin_data in db.items():
-        if coin_data.get("wallet_id") == wallet_id:
-            wallet_coins.append(coin_data)
-            
-    return wallet_coins
+    return db["wallets"][wallet_id]

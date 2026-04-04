@@ -1,12 +1,13 @@
 {
-    "737282": {
-        "coin_id": "737282",
-        "wallet_id": "wallet_main_alpha",
-        "asset_name": "Bitcoin",
-        "symbol": "BTC",
-        "amount": 1.2,
-        "disabled": false,
-        "transferrable": true,
-        "transfer_start_timestamp": 1775336052.238444
+    "coins": {},
+    "wallets": {
+        "wallet_person_1": {
+            "BTC": 2.0500000000000003,
+            "ETH": 14.2
+        },
+        "wallet_person_2": {
+            "BTC": 0.4,
+            "ETH": 0.0
+        }
     }
 }
