@@ -1,3 +1,4 @@
+// ===== WIRING =====
 // OLED GND → ESP32 GND
 // OLED VCC → ESP32 3.3V
 // OLED SDA → D21
@@ -7,6 +8,7 @@
 // PN532 MISO → D19
 // PN532 MOSI → D23
 // PN532 SS   → D5
+// ==================
 
 #include <Wire.h>
 #include <Adafruit_GFX.h>
@@ -18,16 +20,15 @@
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 
-
 // Network
 const char* ssid = "xxxx";          // hotspot name
-const char* password = "xxxx";  // hotspot password
+const char* password = "xxxxx";  // hotspot password
 
-// ngrok url or local ip
-const String transferAPI = "https://ur-ngrok.com/coins/transfer";
+// ngrok url
+const String transferAPI = "https://ur-ngroook.dev/coins/transfer";
 
 // The digital wallet ID for this ESP32 scanner (the merchant receiving the funds)
-const String merchantWalletID = "merchant_pos_register_1";
+const String merchantWalletID = "wallet_person_2";
 
 // oled screen setup
 #define SCREEN_WIDTH 128
@@ -39,7 +40,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 #define PN532_SS  5  
 Adafruit_PN532 nfc(PN532_SS);
 
-// Helper functions
+// helper function
 
 void updateScreen(String line1, String line2 = "", String line3 = "") {
   display.clearDisplay();
@@ -82,13 +83,13 @@ String extractNdefTextFromPages(const uint8_t *buf, int len) {
   return out;
 }
 
-// Main api logic
+// main api logic
 
 void executeTransfer(String coinID) {
   updateScreen("Processing...", "Authenticating API");
   Serial.println("Initiating Transfer API Call...");
 
-  // Reconnect if wifi dropped
+  // FIX 1: Check if Wi-Fi dropped and reconnect if necessary
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("Wi-Fi dropped! Reconnecting...");
     WiFi.disconnect();
@@ -96,7 +97,7 @@ void executeTransfer(String coinID) {
     delay(2000);
   }
 
-  // stack allocation to prevent bugs
+  // FIX 2: Stack allocation prevents memory fragmentation/leaks
   WiFiClientSecure client;
   client.setInsecure(); // Bypass SSL cert validation
 
@@ -133,7 +134,7 @@ void executeTransfer(String coinID) {
         
       } else {
         // DENIED OR PARSE ERROR
-        // fallback to prevent null-pointer crashes
+        // FIX 3: Safe fallback to prevent substring null-pointer crashes
         String detailMsg = "Unknown Error";
         if (!error && resDoc.containsKey("detail")) {
             detailMsg = resDoc["detail"].as<String>();

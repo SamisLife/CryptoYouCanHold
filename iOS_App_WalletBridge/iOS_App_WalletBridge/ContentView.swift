@@ -15,17 +15,43 @@ struct ContentView: View {
 
 struct HomeView: View {
     var body: some View {
-        ZStack {
-            GridBackgroundView()
-            VStack {
-                Text("Physical Crypto").font(.system(size: 28, weight: .semibold, design: .rounded)).foregroundColor(.white).padding(.top, 40)
-                Spacer()
-                Coin3DView().frame(height: 400)
-                Spacer()
-                VStack(spacing: 8) {
-                    Text("Tap physical coin to ESP32").font(.subheadline).foregroundColor(.gray)
-                    Text("Awaiting NFC Scan...").font(.caption).padding(.horizontal, 16).padding(.vertical, 8).background(Capsule().fill(Color.white.opacity(0.1)))
-                }.padding(.bottom, 40)
+        NavigationView {
+            ZStack {
+                GridBackgroundView() // Keeps your cool background
+                
+                VStack(spacing: 40) {
+                    Spacer()
+                    
+                    // Premium Hero Icon
+                    ZStack {
+                        Circle()
+                            .fill(Color.white.opacity(0.03))
+                            .frame(width: 160, height: 160)
+                        
+                        Circle()
+                            .stroke(LinearGradient(gradient: Gradient(colors: [Color.white.opacity(0.2), .clear]), startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1)
+                            .frame(width: 160, height: 160)
+                        
+                        Image(systemName: "sensor.tag.radiowaves.forward")
+                            .font(.system(size: 60, weight: .ultraLight))
+                            .foregroundStyle(LinearGradient(colors: [.white, .gray], startPoint: .top, endPoint: .bottom))
+                    }
+                    
+                    VStack(spacing: 12) {
+                        Text("Crypto You Can Hold")
+                            .font(.system(size: 28, weight: .bold, design: .rounded))
+                            .foregroundColor(.white)
+                        
+                        Text("Your digital assets, secured in physical hardware. Tap the Wallet tab to manage your vault.")
+                            .font(.subheadline)
+                            .foregroundColor(.gray)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 40)
+                            .lineSpacing(4)
+                    }
+                    
+                    Spacer()
+                }
             }
         }
     }
