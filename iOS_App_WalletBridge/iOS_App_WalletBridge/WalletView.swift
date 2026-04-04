@@ -17,7 +17,6 @@ struct WalletView: View {
                         
                         // ===== PREMIUM VAULT SWITCHER =====
                         HStack(spacing: 0) {
-                            // UPDATED NAMES HERE!
                             let options = [("wallet_person_1", "Person 1"), ("wallet_person_2", "Person 2")]
                             
                             ForEach(options, id: \.0) { option in
@@ -50,8 +49,9 @@ struct WalletView: View {
                         .padding(.horizontal, 20)
                         .padding(.top, 20)
                         
-                        // Digital Balances
-                        VStack(spacing: -60) {
+                        // ===== DIGITAL BALANCES (FIXED SPACING) =====
+                        // Changed from -60 to 20 so no cards are hidden!
+                        VStack(spacing: 20) {
                             ForEach(Array(viewModel.digitalAssets.enumerated()), id: \.element.id) { index, asset in
                                 WalletCardView(asset: asset)
                                     .rotation3DEffect(.degrees(isAnimating ? 0 : 45), axis: (x: 1.0, y: 0.0, z: 0.0))
@@ -112,15 +112,12 @@ struct WalletCardView: View {
     let asset: CryptoAsset
     var body: some View {
         ZStack {
-            // Deep Matte Base
             RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .fill(Color(white: 0.05))
             
-            // Subtle Radial Glow matching the crypto color
             RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .fill(RadialGradient(gradient: Gradient(colors: [asset.color.opacity(0.3), .clear]), center: .topLeading, startRadius: 0, endRadius: 300))
             
-            // Ultra-thin Glass Border
             RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .stroke(LinearGradient(gradient: Gradient(colors: [Color.white.opacity(0.4), Color.white.opacity(0.0)]), startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1)
             
@@ -135,7 +132,6 @@ struct WalletCardView: View {
                             .foregroundColor(.white.opacity(0.5))
                     }
                     Spacer()
-                    // Premium Hardware "Smart Chip" Icon
                     Image(systemName: "cpu")
                         .font(.system(size: 28, weight: .light))
                         .foregroundColor(asset.color.opacity(0.8))
