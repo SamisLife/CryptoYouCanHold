@@ -1,12 +1,23 @@
 {
-    "coins": {},
+    "coins": {
+        "99": {
+            "coin_id": "99",
+            "wallet_id": "wallet_person_2",
+            "asset_name": "Bitcoin",
+            "symbol": "BTC",
+            "amount": 0.01,
+            "disabled": false,
+            "transferrable": false,
+            "transfer_start_timestamp": null
+        }
+    },
     "wallets": {
         "wallet_person_1": {
-            "BTC": 1.9200000000000002,
+            "BTC": 2.4400000000000004,
             "ETH": 14.2
         },
         "wallet_person_2": {
-            "BTC": 0.53,
+            "BTC": 0.0,
             "ETH": 0.0
         }
     }
