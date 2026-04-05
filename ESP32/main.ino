@@ -20,40 +20,77 @@
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 
+// Global variables
+
 // Network
-const char* ssid = "xxxx";          // hotspot name
+const char* ssid = "xxxxx";          // hotspot name
 const char* password = "xxxxx";  // hotspot password
 
 // ngrok url
-const String transferAPI = "https://ur-ngroook.dev/coins/transfer";
-
-// The digital wallet ID for this ESP32 scanner (the merchant receiving the funds)
+const String transferAPI = "https://ur-ngrok.dev/coins/transfer";
 const String merchantWalletID = "wallet_person_2";
 
-// oled screen setup
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 32
 #define OLED_RESET    -1
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
-// PN532 (SPI) SETUP
 #define PN532_SS  5  
 Adafruit_PN532 nfc(PN532_SS);
 
-// helper function
+// OLED UI ENGINE
 
-void updateScreen(String line1, String line2 = "", String line3 = "") {
+// Helper: Auto-centers text perfectly horizontally
+void printCentered(String text, int y) {
+  int16_t x1, y1;
+  uint16_t w, h;
+  display.getTextBounds(text, 0, 0, &x1, &y1, &w, &h);
+  display.setCursor((SCREEN_WIDTH - w) / 2, y);
+  display.print(text);
+}
+
+// Renders an inverted header bar with centered text below it
+void ui_Screen(String title, String line1, String line2 = "") {
   display.clearDisplay();
-  display.setTextSize(1);
-  display.setTextColor(SSD1306_WHITE);
-  display.setCursor(0, 0);
   
-  display.println(line1);
-  if(line2.length() > 0) display.println(line2);
-  if(line3.length() > 0) display.println(line3);
+  // Draw Inverted Title Bar
+  display.fillRect(0, 0, SCREEN_WIDTH, 12, SSD1306_WHITE);
+  display.setTextColor(SSD1306_BLACK);
+  display.setTextSize(1);
+  printCentered(title, 2);
+  
+  // Draw Standard Body Text
+  display.setTextColor(SSD1306_WHITE);
+  
+  if (line2.length() == 0) {
+    // If only one line, center it vertically in the remaining space
+    printCentered(line1, 19);
+  } else {
+    // If two lines, stack them
+    printCentered(line1, 15);
+    printCentered(line2, 24);
+  }
   
   display.display();
 }
+
+// Special Full-Screen Success Animation
+void ui_Success() {
+  display.clearDisplay();
+  // Draw full inverted screen
+  display.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, SSD1306_WHITE);
+  display.setTextColor(SSD1306_BLACK);
+  display.setTextSize(2);
+  printCentered("SUCCESS", 9);
+  display.display();
+  
+  delay(1500); // Hold the big success screen
+  
+  // Transition to a sleek confirmation message
+  ui_Screen("TRANSFER COMPLETE", "Ownership Secured", "Ledger Updated");
+}
+
+// Hardware helpers
 
 bool readPageWithRetry(uint8_t page, uint8_t *data, int retries = 8) {
   for (int i = 0; i < retries; i++) {
@@ -83,26 +120,24 @@ String extractNdefTextFromPages(const uint8_t *buf, int len) {
   return out;
 }
 
-// main api logic
+// API Logic
 
 void executeTransfer(String coinID) {
-  updateScreen("Processing...", "Authenticating API");
+  ui_Screen("AUTHENTICATING", "Connecting to API...");
   Serial.println("Initiating Transfer API Call...");
 
-  // FIX 1: Check if Wi-Fi dropped and reconnect if necessary
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("Wi-Fi dropped! Reconnecting...");
+    ui_Screen("SYSTEM ERROR", "Wi-Fi Dropped", "Reconnecting...");
     WiFi.disconnect();
     WiFi.reconnect();
     delay(2000);
   }
 
-  // FIX 2: Stack allocation prevents memory fragmentation/leaks
   WiFiClientSecure client;
-  client.setInsecure(); // Bypass SSL cert validation
+  client.setInsecure();
 
   HTTPClient http;
-  http.setTimeout(10000); // Give Ngrok 10 seconds to respond to prevent -1 timeouts
+  http.setTimeout(10000);
 
   if (http.begin(client, transferAPI)) {
     http.addHeader("Content-Type", "application/json");
@@ -117,44 +152,36 @@ void executeTransfer(String coinID) {
     int httpCode = http.POST(requestBody);
     String responseBody = http.getString();
     
-    Serial.printf("HTTP Code: %d\n", httpCode);
-    Serial.println("Response: " + responseBody);
-
     if (httpCode > 0) {
       StaticJsonDocument<512> resDoc;
       DeserializationError error = deserializeJson(resDoc, responseBody);
 
       if (httpCode == 200 && !error) {
-        // SUCCESS!
-        float amount = resDoc["amount"];
-        const char* symbol = resDoc["symbol"];
-        
-        updateScreen("PAYMENT SUCCESS!", String(amount) + " " + String(symbol), "Link Destroyed.");
+        // SUCCESS! Fire the premium animation
+        ui_Success();
         Serial.println("Transfer Complete!");
         
       } else {
-        // DENIED OR PARSE ERROR
-        // FIX 3: Safe fallback to prevent substring null-pointer crashes
         String detailMsg = "Unknown Error";
         if (!error && resDoc.containsKey("detail")) {
             detailMsg = resDoc["detail"].as<String>();
         }
-        updateScreen("TRANSFER DENIED", detailMsg); 
+        // Substring limits length so it perfectly fits the screen
+        ui_Screen("TRANSFER DENIED", detailMsg.substring(0, 20)); 
         Serial.println("Transfer Denied: " + detailMsg);
       }
     } else {
-      // HTTP -1 (Timeout or Connection Refused)
-      updateScreen("Network Error", "API Timeout (-1)");
-      Serial.printf("HTTP Request failed: %s\n", http.errorToString(httpCode).c_str());
+      ui_Screen("NETWORK ERROR", "API Timeout");
     }
     http.end();
   } else {
-    updateScreen("System Error", "Unable to connect");
+    ui_Screen("NETWORK ERROR", "Cannot Reach Host");
   }
   
   delay(4000);
-  updateScreen("System Ready", "Tap NFC Tag...");
+  ui_Screen("SECURE POS", "Tap Physical Crypto");
 }
+
 
 
 void setup() {
@@ -165,29 +192,29 @@ void setup() {
     Serial.println("OLED not found");
     while (true);
   }
-  updateScreen("Booting up...");
+  
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  display.setTextSize(2);
+  printCentered("CH POS", 8);
+  display.display();
+  delay(1500);
 
-  Serial.print("Connecting to Wi-Fi");
+  ui_Screen("NETWORK", "Connecting Wi-Fi...");
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
-    Serial.print(".");
   }
-  Serial.println("\nWi-Fi Connected!");
-  updateScreen("Wi-Fi Connected!");
-
+  
   nfc.begin();
   uint32_t versiondata = nfc.getFirmwareVersion();
   if (!versiondata) {
-    Serial.println("Didn't find PN53x board");
-    updateScreen("NFC Error!", "Check wiring.");
+    ui_Screen("HARDWARE FAULT", "NFC Module Offline");
     while (1);
   }
-  
   nfc.SAMConfig();
   
-  Serial.println("System Ready. Waiting for NFC tap...");
-  updateScreen("System Ready", "Tap NFC Tag...");
+  ui_Screen("SECURE POS", "Tap Physical Crypto");
 }
 
 void loop() {
@@ -196,8 +223,7 @@ void loop() {
 
   if (nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength, 100)) {
     
-    Serial.println("\n--- Tag Detected ---");
-    updateScreen("Scanning...", "Please hold tag still");
+    ui_Screen("SCANNING", "Hold card steady");
     
     const uint8_t firstPage = 4;
     const uint8_t lastPage  = 39;
@@ -217,23 +243,19 @@ void loop() {
     }
 
     if (!success) {
-      Serial.println("Read failed. Tag removed too quickly?");
-      updateScreen("Read Failed", "Try again");
+      ui_Screen("READ ERROR", "Tag removed too fast");
       delay(2000);
-      updateScreen("System Ready", "Tap NFC Tag...");
+      ui_Screen("SECURE POS", "Tap Physical Crypto");
       return;
     }
 
     String text = extractNdefTextFromPages(buf, bufLen);
     
     if (text.length() == 0) {
-      Serial.println("No NDEF Text found on tag.");
-      updateScreen("Tag Scanned", "No text found");
+      ui_Screen("INVALID MEDIA", "No data on tag");
       delay(2000);
-      updateScreen("System Ready", "Tap NFC Tag...");
+      ui_Screen("SECURE POS", "Tap Physical Crypto");
     } else {
-      Serial.print("Raw Tag Content: ");
-      Serial.println(text);
 
       StaticJsonDocument<512> doc;
       DeserializationError error = deserializeJson(doc, text);
@@ -242,18 +264,16 @@ void loop() {
         const char* serial = doc["coin_id"] | "UNKNOWN";
         
         if (String(serial) != "UNKNOWN") {
-           Serial.printf("Extracted Coin ID: %s\n", serial);
            executeTransfer(String(serial));
         } else {
-           updateScreen("Invalid Tag", "No coin_id found");
+           ui_Screen("INVALID TAG", "No coin ID found");
            delay(2000);
-           updateScreen("System Ready", "Tap NFC Tag...");
+           ui_Screen("SECURE POS", "Tap Physical Crypto");
         }
       } else {
-        Serial.println("Data is not JSON. Showing raw text.");
-        updateScreen("Scanned Text:", text.substring(0, 20));
+        ui_Screen("UNRECOGNIZED FORMAT", text.substring(0, 18));
         delay(3000);
-        updateScreen("System Ready", "Tap NFC Tag...");
+        ui_Screen("SECURE POS", "Tap Physical Crypto");
       }
     }
   }
