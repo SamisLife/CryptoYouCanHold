@@ -3,32 +3,26 @@ import os;
 import time;
 import fastapi;
 import uvicorn;
-import requests;
+import from byllm.lib { Model }
 
 glob DB_FILE = "db.json";
 glob app = fastapi.FastAPI(title="Physical Crypto API");
 
 # ==========================================
-# 1. GEMINI AI INTEGRATION
+# 1. NATIVE GEMINI AI INTEGRATION
 # ==========================================
-def assess_fraud_risk(history: list) -> dict {
-    api_key = os.environ.get("GEMINI_API_KEY");
-    if not api_key { return {"score": 0, "reason": "GEMINI_API_KEY environment variable not set."}; }
-    
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}";
-    prompt = "Analyze the following transaction history for a crypto wallet. Return ONLY a valid JSON object with two keys: 'score' (an integer from 0-100, where 0 is perfectly safe and 100 is highly suspicious) and 'reason' (a short string explaining why). Rapid successive transfers or lack of history increases risk. Transaction History: " + json.dumps(history);
-    
-    payload = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"response_mime_type": "application/json"}};
-    headers = {"Content-Type": "application/json"};
-    
-    try {
-        response = requests.post(url, json=payload, headers=headers);
-        result_text = response.json()["candidates"][0]["content"]["parts"][0]["text"];
-        return json.loads(result_text);
-    } except Exception as e {
-        return {"score": 50, "reason": f"AI Analysis Failed: {str(e)}"};
-    }
+glob llm = Model(model_name="gemini/gemini-2.5-flash");
+
+# NEW: We define the exact structure we want Gemini to guarantee!
+obj RiskAssessment {
+    has score: int;
+    has reason: str;
 }
+
+# Notice it now returns the strictly typed RiskAssessment object
+def assess_fraud_risk(history: list) -> RiskAssessment by llm();
+sem assess_fraud_risk = "Analyze the transaction history list and return a RiskAssessment with an integer 'score' (0-100) and a string 'reason' for the fraud risk. 0 is perfectly safe, 100 is highly suspicious. Rapid successive transfers or lack of history increases risk.";
+
 
 # ==========================================
 # 2. DB HELPERS 
@@ -89,7 +83,6 @@ def get_coin(coin_id: str) {
     return db["coins"][coin_id];
 }
 
-# ===== RESTORED: DELETE COIN =====
 @app.delete("/coins/{coin_id}")
 def delete_coin(coin_id: str) {
     db = load_db();
@@ -111,7 +104,6 @@ def delete_coin(coin_id: str) {
     return {"message": "Coin deleted, funds refunded"};
 }
 
-# ===== RESTORED: TOGGLE STATUS =====
 @app.put("/coins/{coin_id}/status")
 def toggle_status(coin_id: str, disabled: bool) {
     db = load_db();
@@ -214,8 +206,14 @@ def get_wallet_balances(wallet_id: str) {
 def get_wallet_risk(wallet_id: str) {
     db = load_db();
     history = db["history"].get(wallet_id, []);
-    if len(history) == 0 { return {"score": 50, "reason": "New or inactive wallet with no prior transaction history. Proceed with caution."}; }
-    return assess_fraud_risk(history);
+    
+    if len(history) == 0 { 
+        return {"score": 50, "reason": "New or inactive wallet with no prior transaction history. Proceed with caution."}; 
+    }
+    
+    # NEW: Call Gemini, get the strictly typed object, and convert it back to a standard dictionary for FastAPI to send to your iPhone
+    ai_result = assess_fraud_risk(history);
+    return {"score": ai_result.score, "reason": ai_result.reason};
 }
 
 with entry { uvicorn.run(app, host="0.0.0.0", port=8000); }

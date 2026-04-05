@@ -1,12 +1,24 @@
 {
-    "coins": {},
+    "coins": {
+        "98": {
+            "coin_id": "98",
+            "wallet_id": "wallet_person_2",
+            "asset_name": "Bitcoin",
+            "symbol": "BTC",
+            "amount": 0.23154,
+            "disabled": false,
+            "transferrable": false,
+            "transfer_start_timestamp": null,
+            "pending_transfer_to": null
+        }
+    },
     "wallets": {
         "wallet_person_1": {
-            "BTC": 1.85,
+            "BTC": 2.1184600000000002,
             "ETH": 14.2
         },
         "wallet_person_2": {
-            "BTC": 0.6,
+            "BTC": 0.1,
             "ETH": 0.0
         }
     },
@@ -15,9 +27,16 @@
             {
                 "action": "RECEIVED_PHYSICAL_COIN",
                 "symbol": "BTC",
-                "amount": 0.6,
+                "amount": 0.1,
                 "from_wallet": "wallet_person_1",
-                "timestamp": 1775383435.059604
+                "timestamp": 1775384517.637172
+            },
+            {
+                "action": "RECEIVED_PHYSICAL_COIN",
+                "symbol": "BTC",
+                "amount": 0.23154,
+                "from_wallet": "wallet_person_1",
+                "timestamp": 1775385328.769948
             }
         ]
     }
