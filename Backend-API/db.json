@@ -1,24 +1,24 @@
 {
-    "coins": {
-        "99": {
-            "coin_id": "99",
-            "wallet_id": "wallet_person_2",
-            "asset_name": "Bitcoin",
-            "symbol": "BTC",
-            "amount": 0.01,
-            "disabled": false,
-            "transferrable": false,
-            "transfer_start_timestamp": null
-        }
-    },
+    "coins": {},
     "wallets": {
         "wallet_person_1": {
-            "BTC": 2.4400000000000004,
+            "BTC": 1.85,
             "ETH": 14.2
         },
         "wallet_person_2": {
-            "BTC": 0.0,
+            "BTC": 0.6,
             "ETH": 0.0
         }
+    },
+    "history": {
+        "wallet_person_2": [
+            {
+                "action": "RECEIVED_PHYSICAL_COIN",
+                "symbol": "BTC",
+                "amount": 0.6,
+                "from_wallet": "wallet_person_1",
+                "timestamp": 1775383435.059604
+            }
+        ]
     }
 }

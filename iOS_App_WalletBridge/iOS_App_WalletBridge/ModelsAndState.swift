@@ -4,7 +4,8 @@ import Combine
 
 // MARK: - API Data Models
 struct CreateCoinPayload: Codable { let coin_id: String; let wallet_id: String; let asset_name: String; let symbol: String; let amount: Double }
-struct APICoin: Codable { let coin_id: String; let wallet_id: String; let asset_name: String; let symbol: String; let amount: Double; let disabled: Bool; let transferrable: Bool; let transfer_start_timestamp: Double? }
+struct APICoin: Codable { let coin_id: String; let wallet_id: String; let asset_name: String; let symbol: String; let amount: Double; let disabled: Bool; let transferrable: Bool; let transfer_start_timestamp: Double?; let pending_transfer_to: String? }
+struct RiskAssessment: Codable { let score: Int; let reason: String }
 
 // MARK: - App Data Models
 struct CryptoAsset: Identifiable, Equatable { let id = UUID(); let name: String; let symbol: String; var balance: Double; let color: Color }
@@ -28,12 +29,18 @@ class WalletViewModel: ObservableObject {
     @Published var managedCoin: ActivePhysicalCoin? = nil
     @Published var showTransferSuccess: Bool = false
     
-    @Published var masterWalletID = "wallet_person_1" {
-        didSet { syncEntireWallet() }
-    }
+    @Published var masterWalletID = "wallet_person_1" { didSet { syncEntireWallet() } }
+    
+    // AI STATE VARIABLES
+    @Published var showRiskOverlay = false
+    @Published var isCheckingRisk = false
+    @Published var riskScore: Int = 0
+    @Published var riskReason: String = ""
+    @Published var pendingTransferDestination: String = ""
+    @Published var pendingTransferCoinID: String = ""
     
     private var pollingTimer: AnyCancellable?
-    private let apiBaseURL = "https://cheyenne-unfond-tuan.ngrok-free.dev"
+    private let apiBaseURL = "https://cheyenne-unfond-tuan.ngrok-free.dev" // Keep your ngrok URL!
     
     init() { syncEntireWallet() }
     
@@ -42,7 +49,7 @@ class WalletViewModel: ObservableObject {
         fetchPhysicalCoins()
     }
     
-    private func fetchDigitalBalances() {
+    func fetchDigitalBalances() {
         Task {
             do {
                 let url = URL(string: "\(apiBaseURL)/wallets/\(masterWalletID)")!
@@ -58,7 +65,7 @@ class WalletViewModel: ObservableObject {
         }
     }
     
-    private func fetchPhysicalCoins() {
+    func fetchPhysicalCoins() {
         Task {
             do {
                 let url = URL(string: "\(apiBaseURL)/coins/wallet/\(masterWalletID)")!
@@ -83,9 +90,139 @@ class WalletViewModel: ObservableObject {
         }
     }
     
+    @Published var btcPrice: Double = 67000.0
+    @Published var ethPrice: Double = 2000.0
+
+    func fetchLivePrices() {
+        Task {
+            do {
+                let url = URL(string: "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd")!
+                let (data, _) = try await URLSession.shared.data(from: url)
+                
+                // Decode the nested dictionary
+                if let json = try JSONSerialization.jsonObject(with: data) as? [String: [String: Double]] {
+                    await MainActor.run {
+                        self.btcPrice = json["bitcoin"]?["usd"] ?? 67000.0
+                        self.ethPrice = json["ethereum"]?["usd"] ?? 2000.0
+                    }
+                }
+            } catch {
+                print("Price fetch failed, using defaults")
+            }
+        }
+    }
+    
+    // MARK: - AI & Hardware 2FA Flow
+    
+    func evaluateTransferRisk(coinID: String, destination: String) {
+        isCheckingRisk = true
+        pendingTransferCoinID = coinID
+        pendingTransferDestination = destination
+        
+        Task {
+            do {
+                let url = URL(string: "\(apiBaseURL)/wallets/\(destination)/risk")!
+                let (data, response) = try await URLSession.shared.data(from: url)
+                
+                if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 {
+                    let riskData = try JSONDecoder().decode(RiskAssessment.self, from: data)
+                    
+                    await MainActor.run {
+                        self.riskScore = riskData.score
+                        self.riskReason = riskData.reason
+                        self.isCheckingRisk = false
+                        
+                        // FIX: Hide the bottom sheet first so the user can see the overlay!
+                        self.managedCoin = nil
+                        
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+                                self.showRiskOverlay = true
+                            }
+                        }
+                    }
+                }
+            } catch {
+                await MainActor.run { self.isCheckingRisk = false }
+                print("Risk check error: \(error)")
+            }
+        }
+    }
+    
+    private func startPollingForTransfer(coinID: String) {
+        pollingTimer?.cancel()
+        pollingTimer = Timer.publish(every: 2, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in self?.checkIfCoinWasTransferred(coinID: coinID) }
+    }
+    
+    private func checkIfCoinWasTransferred(coinID: String) {
+        Task {
+            do {
+                let url = URL(string: "\(apiBaseURL)/coins/\(coinID)")!
+                let (data, response) = try await URLSession.shared.data(from: url)
+                
+                if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 {
+                    let coin = try JSONDecoder().decode(APICoin.self, from: data)
+                    
+                    if let dest = coin.pending_transfer_to, !dest.isEmpty, self.pendingTransferDestination != dest {
+                        await MainActor.run { self.evaluateTransferRisk(coinID: coinID, destination: dest) }
+                    }
+                    else if coin.wallet_id != self.masterWalletID {
+                        self.pollingTimer?.cancel()
+                        await MainActor.run {
+                            self.showRiskOverlay = false
+                            self.managedCoin = nil
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                                withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
+                                    self.activePhysicalCoins.removeAll(where: { $0.coinID == coinID })
+                                    self.showTransferSuccess = true
+                                }
+                                let generator = UINotificationFeedbackGenerator()
+                                generator.notificationOccurred(.success)
+                                self.fetchDigitalBalances()
+                            }
+                        }
+                    }
+                }
+            } catch { print("Polling Error") }
+        }
+    }
+    
+    func confirmAndTransfer() {
+        Task {
+            let payload = ["coin_id": pendingTransferCoinID]
+            do {
+                var request = URLRequest(url: URL(string: "\(apiBaseURL)/coins/transfer/confirm")!)
+                request.httpMethod = "POST"
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+                let _ = try await URLSession.shared.data(for: request)
+            } catch { print("Confirm error: \(error)") }
+        }
+    }
+    
+    func cancelTransfer() {
+        Task {
+            let payload = ["coin_id": pendingTransferCoinID]
+            do {
+                var request = URLRequest(url: URL(string: "\(apiBaseURL)/coins/transfer/cancel")!)
+                request.httpMethod = "POST"
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+                let _ = try await URLSession.shared.data(for: request)
+                await MainActor.run {
+                    self.showRiskOverlay = false
+                    self.pendingTransferDestination = ""
+                }
+            } catch { print("Cancel error: \(error)") }
+        }
+    }
+    
+    // MARK: - Standard Coin Operations
+    
     func assignPhysicalCoin(asset: CryptoAsset, coinID: String, amount: Double) {
         guard let index = digitalAssets.firstIndex(where: { $0.id == asset.id }) else { return }
-        
         digitalAssets[index].balance -= amount
         let newCoin = ActivePhysicalCoin(coinID: coinID, assetID: asset.id, assetName: asset.name, symbol: asset.symbol, amount: amount, color: asset.color, status: .initializing)
         withAnimation(.spring()) { activePhysicalCoins.insert(newCoin, at: 0) }
@@ -138,56 +275,6 @@ class WalletViewModel: ObservableObject {
         }
     }
     
-    private func startPollingForTransfer(coinID: String) {
-        pollingTimer?.cancel()
-        pollingTimer = Timer.publish(every: 2, on: .main, in: .common)
-            .autoconnect()
-            .sink { [weak self] _ in self?.checkIfCoinWasTransferred(coinID: coinID) }
-    }
-
-    // ===== UPDATED LOGIC: CHECK FOR OWNERSHIP CHANGE =====
-    private func checkIfCoinWasTransferred(coinID: String) {
-        Task {
-            do {
-                let url = URL(string: "\(apiBaseURL)/coins/\(coinID)")!
-                let (data, response) = try await URLSession.shared.data(from: url)
-                
-                if let httpResponse = response as? HTTPURLResponse {
-                    var ownershipChanged = false
-                    
-                    // If it was manually deleted (404) or the wallet_id changed (200), it's gone from our wallet!
-                    if httpResponse.statusCode == 404 {
-                        ownershipChanged = true
-                    } else if httpResponse.statusCode == 200 {
-                        let coin = try JSONDecoder().decode(APICoin.self, from: data)
-                        if coin.wallet_id != self.masterWalletID {
-                            ownershipChanged = true
-                        }
-                    }
-                    
-                    if ownershipChanged {
-                        self.pollingTimer?.cancel()
-                        
-                        await MainActor.run {
-                            self.managedCoin = nil
-                            
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                                withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
-                                    self.activePhysicalCoins.removeAll(where: { $0.coinID == coinID })
-                                    self.showTransferSuccess = true
-                                }
-                                let generator = UINotificationFeedbackGenerator()
-                                generator.notificationOccurred(.success)
-                                
-                                self.fetchDigitalBalances()
-                            }
-                        }
-                    }
-                }
-            } catch { print("Polling Error") }
-        }
-    }
-    
     func reclaimCoin(_ coin: ActivePhysicalCoin) {
         guard let coinIndex = activePhysicalCoins.firstIndex(where: { $0.id == coin.id }) else { return }
         Task {
@@ -196,6 +283,7 @@ class WalletViewModel: ObservableObject {
                 request.httpMethod = "DELETE"
                 let (_, response) = try await URLSession.shared.data(for: request)
                 if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 {
+                    await MainActor.run { self.managedCoin = nil }
                     syncEntireWallet()
                 }
             } catch { print("Reclaim error") }
