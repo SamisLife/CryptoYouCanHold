@@ -19,7 +19,6 @@ struct ActivePhysicalCoin: Identifiable, Equatable {
 @MainActor
 class WalletViewModel: ObservableObject {
     
-    // We initialize these at 0.0 now, because the API will immediately overwrite them with the truth
     @Published var digitalAssets: [CryptoAsset] = [
         CryptoAsset(name: "Bitcoin", symbol: "BTC", balance: 0.0, color: .orange),
         CryptoAsset(name: "Ethereum", symbol: "ETH", balance: 0.0, color: .purple)
@@ -34,19 +33,15 @@ class WalletViewModel: ObservableObject {
     }
     
     private var pollingTimer: AnyCancellable?
-    
-    // NOTE: Removed "/coins" from the end so we can hit both /coins and /wallets endpoints
     private let apiBaseURL = "https://cheyenne-unfond-tuan.ngrok-free.dev"
     
     init() { syncEntireWallet() }
     
-    // MARK: - Master Sync Function
     func syncEntireWallet() {
         fetchDigitalBalances()
         fetchPhysicalCoins()
     }
     
-    // MARK: - Fetch Digital Balances (NEW)
     private func fetchDigitalBalances() {
         Task {
             do {
@@ -54,24 +49,15 @@ class WalletViewModel: ObservableObject {
                 let (data, response) = try await URLSession.shared.data(from: url)
                 guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else { return }
                 
-                // Decode the dictionary {"BTC": 2.45, "ETH": 14.2}
                 let balances = try JSONDecoder().decode([String: Double].self, from: data)
-                
                 withAnimation {
-                    // Update BTC
-                    if let btcIndex = digitalAssets.firstIndex(where: { $0.symbol == "BTC" }) {
-                        digitalAssets[btcIndex].balance = balances["BTC"] ?? 0.0
-                    }
-                    // Update ETH
-                    if let ethIndex = digitalAssets.firstIndex(where: { $0.symbol == "ETH" }) {
-                        digitalAssets[ethIndex].balance = balances["ETH"] ?? 0.0
-                    }
+                    if let btcIndex = digitalAssets.firstIndex(where: { $0.symbol == "BTC" }) { digitalAssets[btcIndex].balance = balances["BTC"] ?? 0.0 }
+                    if let ethIndex = digitalAssets.firstIndex(where: { $0.symbol == "ETH" }) { digitalAssets[ethIndex].balance = balances["ETH"] ?? 0.0 }
                 }
             } catch { print("Fetch balances error: \(error)") }
         }
     }
     
-    // MARK: - Fetch Physical Coins
     private func fetchPhysicalCoins() {
         Task {
             do {
@@ -97,11 +83,9 @@ class WalletViewModel: ObservableObject {
         }
     }
     
-    // MARK: - Create & Assign Coin
     func assignPhysicalCoin(asset: CryptoAsset, coinID: String, amount: Double) {
         guard let index = digitalAssets.firstIndex(where: { $0.id == asset.id }) else { return }
         
-        // Optimistic UI Update
         digitalAssets[index].balance -= amount
         let newCoin = ActivePhysicalCoin(coinID: coinID, assetID: asset.id, assetName: asset.name, symbol: asset.symbol, amount: amount, color: asset.color, status: .initializing)
         withAnimation(.spring()) { activePhysicalCoins.insert(newCoin, at: 0) }
@@ -116,10 +100,7 @@ class WalletViewModel: ObservableObject {
                 let (_, response) = try await URLSession.shared.data(for: request)
                 if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 201 {
                     if let coinIndex = self.activePhysicalCoins.firstIndex(where: { $0.id == newCoin.id }) { withAnimation { self.activePhysicalCoins[coinIndex].status = .active } }
-                } else {
-                    // If backend fails, re-sync to fix the optimistic UI deduction
-                    syncEntireWallet()
-                }
+                } else { syncEntireWallet() }
             } catch {
                 if let coinIndex = self.activePhysicalCoins.firstIndex(where: { $0.id == newCoin.id }) { withAnimation { self.activePhysicalCoins[coinIndex].status = .error } }
                 syncEntireWallet()
@@ -161,32 +142,45 @@ class WalletViewModel: ObservableObject {
         pollingTimer?.cancel()
         pollingTimer = Timer.publish(every: 2, on: .main, in: .common)
             .autoconnect()
-            .sink { [weak self] _ in self?.checkIfCoinWasSpent(coinID: coinID) }
+            .sink { [weak self] _ in self?.checkIfCoinWasTransferred(coinID: coinID) }
     }
 
-    private func checkIfCoinWasSpent(coinID: String) {
+    // ===== UPDATED LOGIC: CHECK FOR OWNERSHIP CHANGE =====
+    private func checkIfCoinWasTransferred(coinID: String) {
         Task {
             do {
                 let url = URL(string: "\(apiBaseURL)/coins/\(coinID)")!
-                let (_, response) = try await URLSession.shared.data(from: url)
+                let (data, response) = try await URLSession.shared.data(from: url)
                 
-                if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 404 {
-                    self.pollingTimer?.cancel()
+                if let httpResponse = response as? HTTPURLResponse {
+                    var ownershipChanged = false
                     
-                    await MainActor.run {
-                        self.managedCoin = nil
+                    // If it was manually deleted (404) or the wallet_id changed (200), it's gone from our wallet!
+                    if httpResponse.statusCode == 404 {
+                        ownershipChanged = true
+                    } else if httpResponse.statusCode == 200 {
+                        let coin = try JSONDecoder().decode(APICoin.self, from: data)
+                        if coin.wallet_id != self.masterWalletID {
+                            ownershipChanged = true
+                        }
+                    }
+                    
+                    if ownershipChanged {
+                        self.pollingTimer?.cancel()
                         
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                            withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
-                                self.activePhysicalCoins.removeAll(where: { $0.coinID == coinID })
-                                self.showTransferSuccess = true
-                            }
-                            let generator = UINotificationFeedbackGenerator()
-                            generator.notificationOccurred(.success)
+                        await MainActor.run {
+                            self.managedCoin = nil
                             
-                            // Re-sync balances just in case (though sender's balance doesn't change here,
-                            // it's good practice to keep the ledger perfectly in sync).
-                            self.fetchDigitalBalances()
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                                withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
+                                    self.activePhysicalCoins.removeAll(where: { $0.coinID == coinID })
+                                    self.showTransferSuccess = true
+                                }
+                                let generator = UINotificationFeedbackGenerator()
+                                generator.notificationOccurred(.success)
+                                
+                                self.fetchDigitalBalances()
+                            }
                         }
                     }
                 }
@@ -202,7 +196,6 @@ class WalletViewModel: ObservableObject {
                 request.httpMethod = "DELETE"
                 let (_, response) = try await URLSession.shared.data(for: request)
                 if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 {
-                    // Instead of calculating it locally, we just fetch the fresh truth from the API!
                     syncEntireWallet()
                 }
             } catch { print("Reclaim error") }

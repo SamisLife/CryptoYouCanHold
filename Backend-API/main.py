@@ -9,7 +9,7 @@ app = FastAPI(title="Physical Crypto API", description="Hardware Wallet Backend"
 
 DB_FILE = "db.json"
 
-# data models
+# --- DATA MODELS ---
 class PhysicalCoin(BaseModel):
     coin_id: str
     wallet_id: str
@@ -24,10 +24,9 @@ class TransferRequest(BaseModel):
     coin_id: str
     destination_wallet: str 
 
-# db helpers
+# --- DB HELPERS ---
 def load_db() -> Dict[str, dict]:
     if not os.path.exists(DB_FILE):
-        # new structure
         return {
             "coins": {},
             "wallets": {
@@ -53,16 +52,13 @@ def create_coin(coin: PhysicalCoin):
     if coin.coin_id in db["coins"]:
         raise HTTPException(status_code=400, detail="Coin ID already exists.")
     
-    # 1. Ensure wallet and symbol exist
     wallet_data = db["wallets"].get(coin.wallet_id, {})
     if coin.symbol not in wallet_data:
         wallet_data[coin.symbol] = 0.0
         
-    # 2. Deduct the specific crypto amount from the sender
     wallet_data[coin.symbol] -= coin.amount
     db["wallets"][coin.wallet_id] = wallet_data
 
-    # 3. Save the physical coin
     db["coins"][coin.coin_id] = coin.dict()
     save_db(db)
     return {"message": "Hardware coin initialized", "coin": db["coins"][coin.coin_id]}
@@ -82,7 +78,6 @@ def delete_coin(coin_id: str):
     
     deleted_coin = db["coins"].pop(coin_id)
     
-    # Reclaim: Refund the specific crypto symbol back to the sender
     wallet_data = db["wallets"].get(deleted_coin["wallet_id"], {})
     if deleted_coin["symbol"] not in wallet_data:
         wallet_data[deleted_coin["symbol"]] = 0.0
@@ -139,26 +134,22 @@ def execute_transfer(request: TransferRequest):
         save_db(db)
         raise HTTPException(status_code=403, detail="Transfer window expired.")
     
-    transfer_amount = coin_data["amount"]
-    symbol = coin_data["symbol"]
     dest_wallet = request.destination_wallet
 
-    # Ensure destination wallet and symbol exist
-    dest_data = db["wallets"].get(dest_wallet, {})
-    if symbol not in dest_data:
-        dest_data[symbol] = 0.0
-        
-    # Credit the receiver
-    dest_data[symbol] += transfer_amount
-    db["wallets"][dest_wallet] = dest_data
+    # ===== NEW LOGIC: TRANSFER OWNERSHIP =====
+    coin_data["wallet_id"] = dest_wallet
     
-    # Destroy physical link
-    db["coins"].pop(coin_id)
+    # Lock the coin down so the new owner is secure
+    coin_data["transferrable"] = False
+    coin_data["transfer_start_timestamp"] = None
+    
+    # Save the updated coin
+    db["coins"][coin_id] = coin_data
     save_db(db)
     
     return {
         "status": "SUCCESS",
-        "message": f"Transferred {transfer_amount} {symbol} to {dest_wallet}"
+        "message": f"Ownership of {coin_data['symbol']} coin transferred to {dest_wallet}"
     }
 
 @app.get("/coins/wallet/{wallet_id}")
@@ -168,10 +159,7 @@ def get_wallet_coins(wallet_id: str):
 
 @app.get("/wallets/{wallet_id}")
 def get_wallet_balances(wallet_id: str):
-    """Fetches the digital balances for a specific wallet."""
     db = load_db()
     if wallet_id not in db["wallets"]:
-        # If the wallet doesn't exist yet, return 0 balances
         return {"BTC": 0.0, "ETH": 0.0}
-    
     return db["wallets"][wallet_id]
