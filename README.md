@@ -1,43 +1,270 @@
+# Crypto You Can Hold
+
+> **Physical crypto transfers that feel like handing someone a coin.**
+
+![Smart Wallet Device](images/smartwallet-setup.jpg)
+
+No wallet addresses. No QR codes. No app accounts shared. Just tap and go.
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Built with Jac](https://img.shields.io/badge/Backend-Jac%20%2B%20FastAPI-purple)]()
+[![iOS](https://img.shields.io/badge/iOS-Swift%20%2F%20SwiftUI-orange)]()
+[![Hardware](https://img.shields.io/badge/Hardware-ESP32%20%2B%20NFC-green)]()
+[![AI](https://img.shields.io/badge/AI-Gemini%202.5%20Flash-red)]()
+
+---
+
+## What is this?
+
+Crypto You Can Hold is an open-source proof-of-concept that bridges the gap between the tangibility of cash and the security of cryptocurrency. You assign value to a physical NFC coin from your phone, unlock a 2-minute transfer window, hand it over, and the recipient taps it against an ESP32-powered smart wallet. Transfer complete — no addresses, no accounts, no public ledger.
+
+The key insight: **the coin stores nothing of value**. It only holds a `coin_id`. All ownership is tracked server-side, so a stolen or cloned coin is completely worthless.
+
+An AI layer (Gemini 2.5 Flash) analyzes transaction history in real time and gives both parties a risk score before the transfer finalizes.
+
+---
+
+## How a Transfer Works
+
+```
+Alice (iPhone App)                Physical Coin          Bob (ESP32 Wallet)
+      │                               │                         │
+      │── Assigns 0.5 BTC to coin ───►│                         │
+      │── Opens 120-sec window ──────►│                         │
+      │                               │◄── Bob taps coin ───────│
+      │◄── Pending transfer detected ─┤                         │
+      │                               │                         │
+      │ [AI Risk Overlay: Score 35 ✓] │                         │
+      │── Confirms transfer ──────────┼────────────────────────►│
+      │                               │   OLED: TRANSFER ✓      │
+```
+
+---
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────┐
+│               iPhone App (SwiftUI)                   │
+│  Manage balances · Assign coins · Authorize transfers │
+└──────────────────────┬──────────────────────────────┘
+                       │ REST (ngrok)
+                       ▼
+┌─────────────────────────────────────────────────────┐
+│           Backend API (Jac + FastAPI)                │
+│  Coin state · Wallet balances · Transfer windows     │
+│  Gemini 2.5 Flash ──► AI risk scoring                │
+│  db.json ──────────► Persistent store                │
+└────────┬────────────────────────────────────────────┘
+         │ REST (ngrok)
+         ▼
+┌─────────────────────────────────────────────────────┐
+│         ESP32 Smart Wallet (Arduino C++)             │
+│  PN532 NFC reader · SSD1306 OLED · WiFi             │
+└──────────────────────▲──────────────────────────────┘
+                       │ 13.56 MHz NFC
+              ┌────────┴────────┐
+              │  Cardboard Coin  │
+              │  + NFC 215 Tag   │
+              │  {"coin_id": …}  │
+              └─────────────────┘
+```
+
+---
+
+## Project Structure
+
+```
+CryptoYouCanHold/
+├── Backend-API/
+│   ├── main.jac          # All API endpoints + AI risk logic
+│   ├── jac.toml          # Jac project config
+│   └── db.json           # File-based data store (coins, wallets, history)
+│
+├── iOS_App_WalletBridge/
+│   └── iOS_App_WalletBridge/
+│       ├── ModelsAndState.swift       # Core ViewModel + API client
+│       ├── ContentView.swift          # Root tab view + 3D coin
+│       ├── WalletView.swift           # Balances, active coins, AI overlay
+│       ├── CoinDetailView.swift       # Asset assignment flow
+│       ├── HardwareControlView.swift  # Unlock / suspend / reclaim
+│       └── SharedViews.swift          # Reusable UI components
+│
+├── ESP32/
+│   └── main.ino           # Smart wallet firmware
+│
+└── assets/
+    └── smart-wallet.svg   # Product diagram
+```
+
+---
+
+## Tech Stack
+
+| Layer | Technology | Key Libraries |
+|-------|-----------|---------------|
+| Backend | Jac + Python 3 | FastAPI, uvicorn |
+| AI | Gemini 2.5 Flash | Jac `by llm()` |
+| iOS | Swift + SwiftUI | Combine, SceneKit, URLSession |
+| Hardware | C++ (Arduino) | Adafruit_PN532, Adafruit_SSD1306, ArduinoJson |
+| Database | JSON | db.json (file-based) |
+| Prices | CoinGecko API | Real-time BTC / ETH |
+| Tunnel | ngrok | Public demo access |
+
+---
+
+## Getting Started
+
+### Prerequisites
+
+- Python 3.10+, [Jac](https://www.jac-lang.org/) installed
+- Xcode 15+ (iOS 17 target)
+- Arduino IDE + ESP32 board support
+- ngrok account (free tier works)
+- Gemini API key
+
+---
+
+### 1. Backend
+
+```bash
+cd Backend-API
+
+# Install Jac
+pip install jaclang
+
+# Set your Gemini API key
+export GEMINI_API_KEY=your_key_here
+
+# Run the server
+jac serve main.jac
+```
+
+Then expose it with ngrok:
+
+```bash
+ngrok http 8000
+```
+
+Copy the `https://…ngrok-free.app` URL — you'll need it for the app and firmware.
+
+---
+
+### 2. iOS App
+
+1. Open `iOS_App_WalletBridge/iOS_App_WalletBridge.xcodeproj` in Xcode.
+2. In `ModelsAndState.swift`, update the base URL constant to your ngrok URL:
+   ```swift
+   let baseURL = "https://your-ngrok-url.ngrok-free.app"
+   ```
+3. Connect a physical iPhone (NFC scanning requires real hardware).
+4. Build and run (`Cmd+R`).
+
+---
+
+### 3. ESP32 Smart Wallet
+
+**Hardware you need:**
+- ESP32 development board
+- Adafruit PN532 NFC/RFID module
+- SSD1306 OLED display (0.92" or 0.96", I2C)
+
+**Wiring:**
+
+| Peripheral | Pin |
+|-----------|-----|
+| OLED SDA  | D21 |
+| OLED SCL  | D22 |
+| NFC SCK   | D18 |
+| NFC MISO  | D19 |
+| NFC MOSI  | D23 |
+| NFC SS    | D5  |
+
+**Firmware setup:**
+
+1. Install board: Arduino IDE → Boards Manager → `esp32` by Espressif.
+2. Install libraries: `Adafruit_PN532`, `Adafruit_SSD1306`, `ArduinoJson`.
+3. Open `ESP32/main.ino`.
+4. Update the constants at the top of the file:
+   ```cpp
+   const char* ssid     = "YourHotspot";
+   const char* password = "YourPassword";
+   const char* apiBase  = "https://your-ngrok-url.ngrok-free.app";
+   ```
+5. Flash to the board.
+
+---
+
+### 4. Physical Coin
+
+Cut any stiff material (cardboard, thin plastic) into a coin shape. Write the following JSON to an NFC 215 tag as a plain NDEF text record and attach it to the coin:
+
+```json
+{"coin_id": "your-unique-id"}
+```
+
+Apps like **NFC Tools** (iOS/Android) can write NDEF records to blank tags.
+
+---
+
+## API Reference
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/coins/` | Create coin, lock value from wallet |
+| `GET` | `/coins/{coin_id}` | Get coin state |
+| `GET` | `/coins/wallet/{wallet_id}` | List coins owned by wallet |
+| `PUT` | `/coins/{coin_id}/transfer_mode` | Open 120-sec transfer window |
+| `POST` | `/coins/tap` | Hardware tap — initiate transfer |
+| `POST` | `/coins/transfer/confirm` | Owner authorizes transfer |
+| `POST` | `/coins/transfer/cancel` | Owner cancels transfer |
+| `GET` | `/wallets/{wallet_id}/risk` | AI risk assessment |
+| `DELETE` | `/coins/{coin_id}` | Destroy coin, refund balance |
+
+---
+
+## Security Model
+
+- The physical coin contains **no keys, no balance, no sensitive data** — only a `coin_id`.
+- Cloning the NFC tag or stealing the coin is useless without an active transfer window.
+- Transfer windows are **120 seconds, single-use**, and tied to the owner's session.
+- AI fraud detection runs on every transfer using transaction history.
+
+---
+
+## Contributing
+
+Contributions are welcome. This was built as a hackathon prototype — there's a lot of room to grow.
+
+**Good first issues:**
+- Replace `db.json` with a real database (SQLite or PostgreSQL)
+- Add multi-asset support beyond BTC/ETH
+- Implement proper auth (JWT) instead of wallet ID strings
+- Add Android app support
+- Add unit tests for backend endpoints
+- Improve ESP32 error handling and WiFi reconnection logic
+
+**How to contribute:**
+
+1. Fork the repository
+2. Create a branch: `git checkout -b feature/your-feature`
+3. Make your changes and commit: `git commit -m "add: short description"`
+4. Push and open a Pull Request
+
+Please keep PRs focused — one feature or fix per PR makes review much faster.
+
+---
+
+## License
+
+MIT — see [LICENSE](LICENSE). Do whatever you want with it.
+
+---
+
 ## Inspiration
 
-"What if crypto transactions felt like handing someone a coin?"
+> *"What if crypto transactions felt like handing someone a coin?"*
 
-Think about the last time you paid someone in cash. No app, no address, no confirmation screen. You handed it over, they took it, and done.
-Crypto never got there. For all its power, it's still shackled to 42 character wallet strings, internet connections, and a public ledger that ties every transaction to your identity. That's why it never spread to daily life. Not because people don't trust it, but because it simply wasn't built for it.
+Cash has something crypto never achieved: it's physical, instant, private, and requires no infrastructure at the point of exchange. Crypto You Can Hold is an experiment in what it would look like to give crypto those same properties — while adding a security layer (fraud detection) that neither cash nor crypto currently has.
 
-We asked: what if it was? What if you had the frictionlessness of cash, the privacy of crypto, and a security layer that neither currently offers?
-
-That question became Crypto You Can Hold!
-
-## What it does
-
-We turn your crypto balance into something you can physically hold, pass, and receive. Like cash, but smarter.
-
-At the center of it is a 3D-printed coin (cardboard cut in the shape of a coin actually. I didn't have access to 3d printing) with an NFC tag inside. The tag stores nothing valuable, just a "coin_id". No money, no keys, no sensitive data. All the real logic happens in the backend, where ownership and value are tracked.
-
-A transaction typically occurs like this:
-
-You scan the coin with your phone (or type the coin_id manually) and assign a value to it from your balance. Then you "unlock" the coin and open a transfer window, a 2-minute, single-use authorization that only you can trigger. You hand the coin to someone. They tap it against their smart wallet (a small device with an NFC PN532 reader and a small OLED screen) and if the window is still active, ownership transfers instantly. No addresses needed, no app accounts shared. Just a handoff.
-
-And because nothing of value lives on the coin itself, stealing the coin or cloning the NFC tag gets an attacker exactly nowhere. The window is tied to the real owner's session, not the physical object.
-On top of all that, there's an AI layer quietly watching every transaction, analyzing how often coins change hands, how fast, and whether anything looks off. It classifies each transfer in real time: safe, suspicious, or flagged for fraud.
-
-The user is presented with an AI insight of how trustworthy the other user is depending on their transaction history. This offers safety to both users while keeping their identity and privacy secure.
-
-The result? The speed and feel of cash. The privacy of crypto. And a security layer neither one has ever had.
-
-## How we built it
-
-We built CryptoCoin across four interconnected pieces: a physical coin, a smart wallet, a mobile app, and a backend that ties them all together.
-
-The coin: a piece of cardboard cut into a coin shape, with an NFC 215 tag glued onto it. That's it. It carries a single JSON payload with a coin_id, no balance, nothing worth stealing. The value of the object is entirely in what the backend says it represents.
-
-The smart wallet is the receiving end of every trade. It's built around an ESP32 microcontroller, an NFC PN532 reader, and a small 0.92" OLED screen. When a coin is tapped, the firmware reads the coin_id from the JSON payload and immediately queries the backend. If the transfer window isn't open, the API returns a 403 and the screen simply reads "Coin Locked." If the window is active, something more interesting happens, before the transfer goes through, the wallet fetches an AI-generated risk assessment of the coin's transaction history. The recipient sees a Risk Score and an English explanation of whether the trade looks clean or suspicious. They then make the call: authorize the transfer, or cancel it. The ESP32 connects to the internet through an iPhone hotspot, keeping it minimal for the demo.
-
-The mobile app is built in Swift with Xcode. It's the coin owner's control center: managing their digital wallet, assigning value to a physical coin, and opening the 2-minute transfer window that arms the handoff.
-
-## How was Jac used
-
-The backend is written entirely in Jac and exposes the endpoints that coordinate all three devices. It maintains a db.json file tracking wallets, coins, and transaction history. The single source of truth for ownership and transfer state. The risk assessment itself is powered by "by llm()" calling Gemini 2.5 Flash, which processes transaction history and returns a scored judgment in real time. 
-
-The whole backend is served via ngrok for better demo access.
+Built at a hackathon. Proof of concept only — not production ready.
